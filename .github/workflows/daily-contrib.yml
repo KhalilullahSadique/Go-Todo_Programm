@@ -21,9 +21,42 @@ jobs:
           git config user.name  "khalilSediq"
           git config user.email "khalilullahsadique1334@gmail.com"
 
-          # Random number of commits between 10 and 15.
-          COUNT=$(( (RANDOM % 6) + 10 ))
-          echo "Making $COUNT commits"
+          # --- Human-like commit count -------------------------------------
+          # Goal: some weeks are "heavy" (~50/day), some are "light" (~30/day),
+          # with small day-to-day jitter, occasional quiet days, and rare
+          # rest days. Streaks come from seeding the week's "mood" by week no.
+          WEEK=$(date +%V)      # ISO week number (01-53) -> stable for 7 days
+          DOW=$(date +%u)       # day of week 1..7 (Mon..Sun)
+
+          # Pick this week's baseline from the week number (deterministic per
+          # week, so Mon-Sun share a similar level = a natural streak).
+          case $(( WEEK % 5 )) in
+            0) BASE=50 ;;   # heavy week
+            1) BASE=45 ;;
+            2) BASE=30 ;;   # lighter week
+            3) BASE=38 ;;
+            4) BASE=50 ;;   # heavy week
+          esac
+
+          # Day-to-day jitter: +/- up to 8 commits.
+          JITTER=$(( (RANDOM % 17) - 8 ))
+          COUNT=$(( BASE + JITTER ))
+
+          # Weekends: people commit less. ~40% chance a weekend day is quiet.
+          if [ "$DOW" -ge 6 ] && [ $(( RANDOM % 5 )) -lt 2 ]; then
+            COUNT=$(( (RANDOM % 8) + 3 ))   # quiet weekend day: 3-10
+          fi
+
+          # Rare full rest day (~1 in 12 runs) so it isn't a perfect streak.
+          if [ $(( RANDOM % 12 )) -eq 0 ]; then
+            echo "Rest day - no commits today."
+            exit 0
+          fi
+
+          # Clamp to sane bounds.
+          [ "$COUNT" -lt 1 ]  && COUNT=1
+          [ "$COUNT" -gt 60 ] && COUNT=60
+          echo "Week $WEEK (base $BASE), DOW $DOW -> making $COUNT commits"
 
           mkdir -p .contrib
           for i in $(seq 1 "$COUNT"); do
