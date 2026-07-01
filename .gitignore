@@ -1,2 +1,26 @@
+# --- Go todo CLI (todo-cli/) ---
+
+# Compiled binaries / build output
+/todo-cli/program
+/todo-cli/todo
 program
+todo
+*.exe
+*.test
+
+# Runtime data file written by the CLI
+.todo.json
+**/.todo.json
+
+# Go test & coverage output
+*.out
+coverage.txt
+coverage/
+
+# Editor / OS cruft
+.vscode/
+.idea/
+.DS_Store
+
+# --- Sibling Next.js project (its own repo; excluded from this repo's Go tooling) ---
 Payable System APP
