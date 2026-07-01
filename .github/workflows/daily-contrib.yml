@@ -2,12 +2,18 @@ name: Daily Contributions
 
 on:
   schedule:
-    # GitHub cron is always UTC. PKT = UTC+5.
-    # Minutes are deliberately OFF the top of the hour: GitHub delays/drops
-    # scheduled runs most at :00, so :17 / :23 are more reliable.
-    - cron: "17 5 * * *"    # ~10:17 AM PKT (morning session)
-    - cron: "23 14 * * *"   # ~07:23 PM PKT (evening session)
-  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab
+    # GitHub cron is always UTC. PKT = UTC+5. Minutes are OFF the top of the
+    # hour on purpose: GitHub delays/drops scheduled runs most at :00.
+    # Three runs/day so a delayed or dropped run is covered by a later one.
+    - cron: "17 5 * * *"    # ~10:17 AM PKT  (morning  checkpoint  40%)
+    - cron: "41 9 * * *"    # ~02:41 PM PKT  (midday   checkpoint  70%)
+    - cron: "23 14 * * *"   # ~07:23 PM PKT  (evening  checkpoint 100%)
+  workflow_dispatch: {}     # manual trigger from the Actions tab
+
+# Never let two runs push at the same time; queue them instead.
+concurrency:
+  group: daily-contrib
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -16,61 +22,100 @@ jobs:
   commit:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout (full history so we can count today's commits)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Make daily commits
+      - name: Top up today's commits toward a deterministic daily target
         run: |
+          set -euo pipefail
+
           git config user.name  "khalilSediq"
           git config user.email "khalilullahsadique1334@gmail.com"
 
-          # --- Human-like commit count -------------------------------------
-          # Goal: some weeks are "heavy" (~50/day), some are "light" (~30/day),
-          # with small day-to-day jitter, occasional quiet days, and rare
-          # rest days. Streaks come from seeding the week's "mood" by week no.
-          WEEK=$(date +%V)      # ISO week number (01-53) -> stable for 7 days
-          DOW=$(date +%u)       # day of week 1..7 (Mon..Sun)
+          DAY=$(date -u +%Y-%m-%d)
+          WEEK=$((10#$(date -u +%V)))   # ISO week number
+          DOW=$((10#$(date -u +%u)))    # 1=Mon .. 7=Sun
+          HOUR=$((10#$(date -u +%H)))   # 00..23 UTC
 
-          # Pick this week's baseline from the week number (deterministic per
-          # week, so Mon-Sun share a similar level = a natural streak).
+          # --- Deterministic per-day randomness -------------------------------
+          # Same date -> same hash -> same target on every run of the day, so
+          # any run can compute the goal and top up to it (self-healing).
+          HEX=$(printf '%s' "$DAY" | sha256sum | tr -cd '0-9a-f')
+          H1=$((16#${HEX:0:6}))
+          H2=$((16#${HEX:6:6}))
+          H3=$((16#${HEX:12:6}))
+          H4=$((16#${HEX:18:6}))
+
+          # This week's baseline (stable Mon-Sun => natural streaks).
           case $(( WEEK % 5 )) in
-            0) BASE=50 ;;   # heavy week
+            0) BASE=50 ;;
             1) BASE=45 ;;
-            2) BASE=30 ;;   # lighter week
+            2) BASE=30 ;;
             3) BASE=38 ;;
-            4) BASE=50 ;;   # heavy week
+            *) BASE=50 ;;
           esac
 
-          # Day-to-day jitter: +/- up to 8 commits.
-          JITTER=$(( (RANDOM % 17) - 8 ))
-          COUNT=$(( BASE + JITTER ))
+          # Day-to-day jitter: +/- up to 8 (deterministic from the date).
+          JITTER=$(( (H1 % 17) - 8 ))
+          TARGET=$(( BASE + JITTER ))
 
-          # This workflow runs twice a day (morning + evening), so each run
-          # makes about half the day's commits. Split is uneven on purpose.
-          HALF=$(( (RANDOM % 3) + 4 ))          # 4,5,6 -> 40%-60%
-          COUNT=$(( COUNT * HALF / 10 ))
-
-          # Weekends: people commit less. ~40% chance a weekend day is quiet.
-          if [ "$DOW" -ge 6 ] && [ $(( RANDOM % 5 )) -lt 2 ]; then
-            COUNT=$(( (RANDOM % 8) + 3 ))   # quiet weekend day: 3-10
+          # Weekends are lighter ~40% of the time.
+          if [ "$DOW" -ge 6 ] && [ $(( H2 % 5 )) -lt 2 ]; then
+            TARGET=$(( (H4 % 8) + 3 ))
           fi
 
-          # Rare full rest day (~1 in 12 runs) so it isn't a perfect streak.
-          if [ $(( RANDOM % 12 )) -eq 0 ]; then
-            echo "Rest day - no commits today."
+          # Rare full rest day (~1 in 12) so it isn't a perfect streak.
+          if [ $(( H3 % 12 )) -eq 0 ]; then
+            TARGET=0
+          fi
+
+          # Clamp.
+          [ "$TARGET" -lt 0 ]  && TARGET=0
+          [ "$TARGET" -gt 60 ] && TARGET=60
+
+          # --- Intra-day checkpoint -------------------------------------------
+          # Spread commits across the day, but each checkpoint is a floor the
+          # run drives toward -- so a missed morning run is made up later.
+          if   [ "$HOUR" -lt 9 ];  then PCT=40
+          elif [ "$HOUR" -lt 14 ]; then PCT=70
+          else                          PCT=100
+          fi
+          CHECK=$(( (TARGET * PCT + 99) / 100 ))   # ceil(target * pct/100)
+
+          # How many commits already exist for today (commit subject is unique
+          # per day). '|| true' keeps grep's exit-1-on-zero from aborting.
+          EXISTING=$(git log --pretty=%s | grep -cE "daily activity $DAY #[0-9]+$" || true)
+          EXISTING=${EXISTING:-0}
+
+          NEED=$(( CHECK - EXISTING ))
+          echo "day=$DAY week=$WEEK dow=$DOW hour=$HOUR target=$TARGET pct=$PCT check=$CHECK existing=$EXISTING need=$NEED"
+
+          if [ "$NEED" -le 0 ]; then
+            echo "Nothing to do this run (already at/over checkpoint)."
             exit 0
           fi
 
-          # Clamp to sane bounds.
-          [ "$COUNT" -lt 1 ]  && COUNT=1
-          [ "$COUNT" -gt 60 ] && COUNT=60
-          echo "Week $WEEK (base $BASE), DOW $DOW -> making $COUNT commits"
-
           mkdir -p .contrib
-          for i in $(seq 1 "$COUNT"); do
-            echo "activity $(date --iso-8601=seconds) #$i" >> .contrib/log.txt
+          START=$(( EXISTING + 1 ))
+          END=$(( EXISTING + NEED ))
+          for i in $(seq "$START" "$END"); do
+            echo "activity $(date -u --iso-8601=seconds) #$i" >> .contrib/log.txt
             git add .contrib/log.txt
-            git commit -q -m "chore: daily activity $(date +%F) #$i"
+            git commit -q -m "chore: daily activity $DAY #$i"
           done
 
-          git push origin HEAD:main
+          # --- Push with rebase-retry (handles races with a queued run) -------
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              echo "Pushed on attempt $attempt."
+              exit 0
+            fi
+            echo "Push failed (attempt $attempt); rebasing and retrying..."
+            git pull --rebase origin main || true
+            sleep $(( attempt * 5 ))
+          done
+
+          echo "ERROR: could not push after retries." >&2
+          exit 1
