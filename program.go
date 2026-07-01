@@ -155,12 +155,15 @@ func (t *TodoList) add(text string) {
 
 func (t *TodoList) markDone(id int) bool {
 	for i, task := range t.Tasks {
+
 		if task.ID == id {
+
 			if task.Done {
 				return true
 			}
 			t.Tasks[i].Done = true
-			fmt.Printf("marked task %d done\n", id)
+			// fmt.Printf("marked task %d done\n", id)
+			fmt.Println("marked task done")
 			return true
 		}
 	}
