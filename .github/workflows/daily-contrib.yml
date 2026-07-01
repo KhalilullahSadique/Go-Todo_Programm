@@ -2,8 +2,9 @@ name: Daily Contributions
 
 on:
   schedule:
-    # Runs every day at 18:00 UTC (~11:00 PM PKT). GitHub cron is always UTC.
-    - cron: "0 18 * * *"
+    # GitHub cron is always UTC. PKT = UTC+5.
+    - cron: "0 5 * * *"    # 10:00 AM PKT (morning session)
+    - cron: "0 14 * * *"   # 07:00 PM PKT (evening session)
   workflow_dispatch: {}   # lets you trigger it manually from the Actions tab
 
 permissions:
@@ -41,6 +42,11 @@ jobs:
           # Day-to-day jitter: +/- up to 8 commits.
           JITTER=$(( (RANDOM % 17) - 8 ))
           COUNT=$(( BASE + JITTER ))
+
+          # This workflow runs twice a day (morning + evening), so each run
+          # makes about half the day's commits. Split is uneven on purpose.
+          HALF=$(( (RANDOM % 3) + 4 ))          # 4,5,6 -> 40%-60%
+          COUNT=$(( COUNT * HALF / 10 ))
 
           # Weekends: people commit less. ~40% chance a weekend day is quiet.
           if [ "$DOW" -ge 6 ] && [ $(( RANDOM % 5 )) -lt 2 ]; then
