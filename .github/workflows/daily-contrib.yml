@@ -1,0 +1,35 @@
+name: Daily Contributions
+
+on:
+  schedule:
+    # Runs every day at 18:00 UTC (~11:00 PM PKT). GitHub cron is always UTC.
+    - cron: "0 18 * * *"
+  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Make daily commits
+        run: |
+          git config user.name  "khalilSediq"
+          git config user.email "khalilullahsadique1334@gmail.com"
+
+          # Random number of commits between 10 and 15.
+          COUNT=$(( (RANDOM % 6) + 10 ))
+          echo "Making $COUNT commits"
+
+          mkdir -p .contrib
+          for i in $(seq 1 "$COUNT"); do
+            echo "activity $(date --iso-8601=seconds) #$i" >> .contrib/log.txt
+            git add .contrib/log.txt
+            git commit -q -m "chore: daily activity $(date +%F) #$i"
+          done
+
+          git push origin HEAD:main
